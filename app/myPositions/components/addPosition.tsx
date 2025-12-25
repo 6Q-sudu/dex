@@ -99,16 +99,18 @@ export default function AddPosition() {
     const amount0Desired = ethers.parseUnits(inputAmount, decimal0);
     const amount1Desired = ethers.parseUnits(outputAmount, decimal1);
     try {
-      const allowToken0 = await contract0.allowance(address, pool.poolAddress)
-      const allowToken1 = await contract1.allowance(address, pool.poolAddress)
+      const allowToken0 = await contract0.allowance(address, process.env.NEXT_PUBLIC_POSITION_MANAGER_ID)
+      const allowToken1 = await contract1.allowance(address, process.env.NEXT_PUBLIC_POSITION_MANAGER_ID)
       console.log("amount0Desired", amount0Desired, amount1Desired, allowToken0, allowToken1);
 
       let tx0, tx1;
       if (amount0Desired > allowToken0) {
-        tx0 = await contractSigner0.approve(pool.poolAddress, amount0Desired)
+        tx0 = await contractSigner0.approve(process.env.NEXT_PUBLIC_POSITION_MANAGER_ID, amount0Desired)
+        await tx0.wait();
       }
       if (amount1Desired > allowToken1) {
-        tx1 = await contractSigner1.approve(pool.poolAddress, amount1Desired)
+        tx1 = await contractSigner1.approve(process.env.NEXT_PUBLIC_POSITION_MANAGER_ID, amount1Desired)
+        await tx1.wait();
       }
       console.log("allowToken0", allowToken0, allowToken1, tx0, tx1);
 
@@ -129,10 +131,11 @@ export default function AddPosition() {
     console.log("param", param);
     const tx = await positionContractWithSigner!.mint(param);
     console.log("tx", tx);
+    await tx.wait();
     toast("Position creation transaction submitted.", {
       type: "info",
     });
-    // handleClose();
+    handleClose();
   };
 
   const onPairChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {

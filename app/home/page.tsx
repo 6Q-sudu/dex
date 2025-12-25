@@ -27,6 +27,7 @@ export default function Home() {
     formattedToken0Balance: string;
     formattedToken1Balance: string;
     sqrtPriceX96: any;
+    liquidity: any;
   })[]>([]);
   const [pairValue, setPairValue] = React.useState("")
   const [formValue, setFormValue] = React.useState({
@@ -106,21 +107,11 @@ export default function Home() {
     };
     const { token0, token1, index } = pool;
     const amountIn = tokenAmounts.inputToken;
-    const contractSigner0 = new ethers.Contract(pool.token0, erc20, signer);
     const contract0 = await useERC20Contract(pool.token0, provider);
-    if (!contract0 || !contractSigner0 || !contractWithSigner) return;
+    const contract1 = await useERC20Contract(pool.token1, provider);
+    if (!contract0 || !contractWithSigner) return;
     const decimal0 = await contract0.decimals();
-    const amount0Desired = ethers.parseUnits(amountIn.toString(), decimal0);
-    try {
-      const allowToken0 = await contract0.allowance(address, pool.poolAddress)
-
-      let tx0;
-      if (amount0Desired > allowToken0) {
-        tx0 = await contractSigner0.approve(pool.poolAddress, amount0Desired)
-      }
-    } catch (error) {
-      console.log("allowance", error);
-    }
+    const decimal1 = await contract1!.decimals();
     // const indexs = pools.filter(p => {
     //   return p.token0 === token0 && p.token1 === token1;
     // }).map(p => p.index);
@@ -134,9 +125,22 @@ export default function Home() {
       sqrtPriceLimitX96: 4295128740,
     }
     console.log("quoteExactInput params", params);
+    try {
+      const tx = await contractWithSigner.quoteExactInput.staticCall(params)
+      console.log("quoteExactInput tx", tx);
+      const amountOut = ethers.formatUnits(tx, decimal1);
+      setTokenAmounts({
+        ...tokenAmounts,
+        outputToken: amountOut,
+      });
+    } catch (error) {
+      console.log("quoteExactInput error", error);
 
-    const tx = await contractWithSigner.quoteExactInput(params)
-    console.log("quoteExactInput tx", tx);
+      toast("this pool has zero liquidity", {
+        type: "warning",
+      });
+    }
+
   };
   const outputTokenBlur = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (pairValue === "") {
@@ -158,21 +162,43 @@ export default function Home() {
     if (!pool) return;
     const contract0 = useERC20Contract(pool.token0, provider);
     const contract1 = useERC20Contract(pool.token1, provider);
-    if (!contract0 || !contract1) return;
+    const contractSigner0 = new ethers.Contract(pool.token0, erc20, signer);
+    if (!contract0 || !contract1 || !contractSigner0) return;
     const decimal0 = await contract0.decimals();
     const decimal1 = await contract1.decimals();
+    const amount0Desired = ethers.parseUnits(tokenAmounts.inputToken.toString(), decimal0);
+    const amount1Desired = ethers.parseUnits(tokenAmounts.outputToken.toString(), decimal1);
+    try {
+      const allowToken0 = await contract0.allowance(address, process.env.NEXT_PUBLIC_SWAP_ROUTER_ID)
+      console.log("amount0Desired", amount0Desired, allowToken0);
+      let tx0;
+      if (amount0Desired > allowToken0) {
+        tx0 = await contractSigner0.approve(process.env.NEXT_PUBLIC_SWAP_ROUTER_ID, amount0Desired);
+        await tx0.wait();
+      }
+    } catch (error) {
+      console.log("allowance", error);
+    }
+    const slippageTolerance = 0.005; // 0.5%
+    const amountOutMinimum = amount1Desired * BigInt((1 - slippageTolerance) * 10000) / BigInt(10000);
+    // 不管什么交易对，统一这样设：
+    // if (zeroForOne) {
+    //   sqrtPriceLimitX96 = "4295128740";      // > MIN
+    // } else {
+    //   sqrtPriceLimitX96 = "1461446703485210103287273052241885168127"; // < MAX
+    // }
     const params = {
       tokenIn: pool.token0,
       tokenOut: pool.token1,
       indexPath: [pool.index],
-      amountIn: ethers.parseUnits(tokenAmounts.inputToken.toString(), decimal0), // 假设输入金额以18位小数表示
+      amountIn: amount0Desired, // 假设输入金额以18位小数表示
       recipient: address,
       deadline: Math.floor(Date.now() / 1000) + 300, // 5分钟过期
-      amountOutMinimum: ethers.parseUnits("0.01", decimal1), // 最小接受输出数量，防止滑点
-      sqrtPriceLimitX96: 0,
+      amountOutMinimum: amountOutMinimum, // 最小接受输出数量，防止滑点
+      sqrtPriceLimitX96: 4295128740,
     }
     console.log("Swap params", params);
-    const tx = await contractWithSigner.exactInput(params, { value: ethers.parseEther("0.001") });
+    const tx = await contractWithSigner.exactInput(params);
     console.log("Swap tx", tx);
     const receipt = await tx.wait();
     console.log("Swap receipt", receipt);
@@ -209,6 +235,7 @@ export default function Home() {
           formattedToken0Balance,
           formattedToken1Balance,
           sqrtPriceX96: pool.sqrtPriceX96,
+          liquidity: pool.liquidity,
         }
       }));
       console.log('allPools', pools1);
@@ -227,7 +254,7 @@ export default function Home() {
               <select className='w-[400px]' name="inputToken" id="inputToken" value={pairValue} onChange={onPairChange}>
                 <option value="">请选择</option>
                 {pools.map((pool) => (
-                  <option key={pool.poolAddress} value={pool.poolAddress}>{`${pool.symbol0}[${pool.formattedToken0Balance}](${pool.token0.substring(0, 6)}...${pool.token0.substring(pool.token0.length - 4)}) / ${pool.symbol1}[${pool.formattedToken1Balance}](${pool.token1.substring(0, 6)}...${pool.token1.substring(pool.token1.length - 4)})/${pool.index}`}</option>
+                  <option key={pool.poolAddress} value={pool.poolAddress}>{`${pool.symbol0}[${pool.formattedToken0Balance}](${pool.token0.substring(0, 6)}...${pool.token0.substring(pool.token0.length - 4)}) / ${pool.symbol1}[${pool.formattedToken1Balance}](${pool.token1.substring(0, 6)}...${pool.token1.substring(pool.token1.length - 4)})/${pool.index}/${pool.liquidity}`}</option>
                 ))}
               </select>
             </div>
@@ -247,7 +274,7 @@ export default function Home() {
               <select className='w-[400px]' name="outputToken" id="outputToken" value={pairValue} onChange={onPairChange}>
                 <option value="">请选择</option>
                 {pools.map((pool) => (
-                  <option key={pool.poolAddress} value={pool.poolAddress}>{`${pool.symbol0}[${pool.formattedToken0Balance}](${pool.token0.substring(0, 6)}...${pool.token0.substring(pool.token0.length - 4)}) / ${pool.symbol1}[${pool.formattedToken1Balance}](${pool.token1.substring(0, 6)}...${pool.token1.substring(pool.token1.length - 4)})/${pool.index}`}</option>
+                  <option key={pool.poolAddress} value={pool.poolAddress}>{`${pool.symbol0}[${pool.formattedToken0Balance}](${pool.token0.substring(0, 6)}...${pool.token0.substring(pool.token0.length - 4)}) / ${pool.symbol1}[${pool.formattedToken1Balance}](${pool.token1.substring(0, 6)}...${pool.token1.substring(pool.token1.length - 4)})/${pool.index}/${pool.liquidity}`}</option>
                 ))}
               </select>
             </div>
